@@ -31,8 +31,8 @@ public class MqConsumer implements RocketMQListener<String> {
         }catch(Exception ex){
             ex.printStackTrace();
             System.out.println("消息消费失败了！:"+ ex);
-            //抛出异常后，MQClient会返回ConsumeConcurrentlyStatus.RECONSUME_LATER,这条消息会再次尝试消费
-            //throw new RuntimeException(ex);
+            //抛出异常后，ConsumeConcurrentlyStatus.RECONSUME_LATER
+            throw new RuntimeException(ex);
         }
 
     }
