@@ -4,17 +4,14 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.OpType;
 import co.elastic.clients.elasticsearch.core.IndexRequest;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
-import co.elastic.clients.elasticsearch.core.SearchResponse;
-import co.elastic.clients.elasticsearch.core.search.Hit;
-import co.elastic.clients.json.jackson.JacksonJsonpMapper;
-import co.elastic.clients.transport.ElasticsearchTransport;
-import co.elastic.clients.transport.rest_client.RestClientTransport;
-import org.elasticsearch.client.RestClient;
+import co.elastic.clients.elasticsearch.indices.*;
+import org.elasticsearch.client.RequestOptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import xiattong.demo.es.order.model.OrderDto;
 
 import javax.annotation.Resource;
+import java.io.IOException;
 
 /**
  * @author ：xiattong
@@ -26,43 +23,51 @@ import javax.annotation.Resource;
 @SpringBootTest
 public class ConnectingTest {
 
-    @Resource()
-    private RestClient restClient;
+    @Resource
+    private ElasticsearchClient esClient;
 
     @Test
-    public void searchTest() throws Exception {
-
-        ElasticsearchTransport transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
-        ElasticsearchClient client = new ElasticsearchClient(transport);
-
-        SearchResponse<OrderDto> search = client.search(s -> s
-                        .index("orders")
-                        ,
-                OrderDto.class);
-
-        for (Hit<OrderDto> hit: search.hits().hits()) {
-            System.out.println((hit.source()));
-        }
+    public void createIndex() throws IOException {
+        //tag::builders
+        CreateIndexResponse createResponse = esClient.indices().create(
+                new CreateIndexRequest.Builder()
+                        .index("orders-000001")
+                        .aliases("orders",
+                                new Alias.Builder().isWriteIndex(true).build()
+                        )
+                        .build()
+        );
+        System.out.printf(createResponse.index());
     }
 
     @Test
-    public void putTest() throws Exception{
-        ElasticsearchTransport transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
-        ElasticsearchClient client = new ElasticsearchClient(transport);
+    public void writeIndex() throws IOException {
 
-        OrderDto orderDto = new OrderDto();
-        orderDto.setId(1L);
-        orderDto.setOrderAt("2022-10-18 01:24:00");
 
-        IndexRequest<OrderDto> request = IndexRequest.of(i -> i
-                .index("orders-2401")
-                .id(orderDto.getId().toString())
-                .opType(OpType.Create)
-                .document(orderDto));
+        for (long id = 2L ; id < 10l ; id ++) {
 
-        IndexResponse response = client.index(request);
+            OrderDto orderDto = new OrderDto();
+            orderDto.setId(id);
 
-        System.out.println("Indexed with version " + response.version());
+            IndexRequest<OrderDto> request = IndexRequest.of(i -> i
+                    .index("orders")
+                    .id(orderDto.getId().toString())
+                    .opType(OpType.Create)
+                    .document(orderDto));
 
+            IndexResponse response = esClient.index(request);
+            System.out.printf("订单写入ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
+        }
+    }
+
+    /**
+     * 查询一个别名是否存在
+     * @throws IOException
+     */
+    @Test
+    public void checkAliasExit() throws IOException {
+        GetAliasRequest request = GetAliasRequest.of(i ->i.name("orders"));
+        GetAliasResponse response = esClient.indices().getAlias(request);
+        System.out.println(response);
     }
 }

@@ -3,6 +3,7 @@ package xiattong.demo.es;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.OpType;
 import co.elastic.clients.elasticsearch.core.*;
+import co.elastic.clients.elasticsearch.core.search.Hit;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.TypeReference;
 import org.apache.commons.collections.CollectionUtils;
@@ -65,10 +66,13 @@ public class ElasticMessageHandler {
         switch (type) {
             case INSERT:
                 insertProcess(orderList);
+                break;
             case UPDATE:
                 updateProcess(orderList);
+                break;
             case DELETE:
                 deleteProcess(orderList);
+                break;
         }
     }
 
@@ -79,7 +83,15 @@ public class ElasticMessageHandler {
     private void insertProcess(List<OrderDto> orderList) throws IOException {
         // 新增数据不需要做版本校验，直接写入es
         for (OrderDto orderDto : orderList) {
-            write(orderDto);
+            IndexRequest<OrderDto> request = IndexRequest.of(i -> i
+                    .index("orders")
+                    .requireAlias(Boolean.TRUE)
+                    .id(orderDto.getId().toString())
+                    .opType(OpType.Create)
+                    .document(orderDto));
+
+            IndexResponse response = esClient.index(request);
+            System.out.printf("订单写入ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
         }
     }
 
@@ -88,17 +100,40 @@ public class ElasticMessageHandler {
      * @param orderList
      */
     private void updateProcess(List<OrderDto> orderList) throws IOException {
-        // 更新需要先去ES中查询数据并比对版本号
         for (OrderDto orderDto : orderList) {
-            GetResponse<OrderDto> response = esClient.get(g -> g.index("orders-" + orderDto.getSellerId()).id(orderDto.getId().toString()), OrderDto.class);
-            if (response.found()) {
-                OrderDto oldOrder = response.source();
-                // 检查版本，新数据版本低时直接丢弃
-                if (oldOrder.getVersion() >= orderDto.getVersion()) {
-                    continue;
+            // 更新需要先去ES中查询数据并比对版本号
+            SearchResponse<OrderDto> searchResponse = esClient.search(s -> s
+                            .index("orders")
+                            .query(q -> q.match(t -> t.field("orderNo").query(orderDto.getOrderNo()))),
+                    OrderDto.class
+            );
+            List<Hit<OrderDto>> hits = searchResponse.hits().hits();
+            if (CollectionUtils.isNotEmpty(hits)) {
+                for (Hit<OrderDto> hit: hits) {
+                    OrderDto oldOrder = hit.source();
+                    // 检查版本，新数据版本低时直接丢弃
+                    if (oldOrder.getVersion() >= orderDto.getVersion()) {
+                        continue;
+                    }
                 }
             }
-            write(orderDto);
+
+            // 先删除
+            DeleteByQueryRequest deleteRequest = DeleteByQueryRequest.of(i -> i
+                     .index("orders")
+                     .query(q -> q.match(t -> t.field("orderNo").query(orderDto.getOrderNo()))));
+            esClient.deleteByQuery(deleteRequest);
+
+            // 再写入
+            IndexRequest<OrderDto> indexRequest = IndexRequest.of(i -> i
+                    .index("orders")
+                    .requireAlias(Boolean.TRUE)
+                    .id(orderDto.getId().toString())
+                    .opType(OpType.Create)
+                    .document(orderDto));
+
+            IndexResponse indexResponse = esClient.index(indexRequest);
+            System.out.printf("更新ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), indexResponse.version());
         }
     }
 
@@ -108,26 +143,10 @@ public class ElasticMessageHandler {
      */
     private void deleteProcess(List<OrderDto> orderList) throws IOException{
         for (OrderDto orderDto : orderList) {
-            DeleteRequest request = DeleteRequest.of(i -> i.index("orders-" + orderDto.getSellerId())
+            DeleteRequest request = DeleteRequest.of(i -> i.index("orders")
                             .id(orderDto.getId().toString()));
             DeleteResponse response = esClient.delete(request);
             System.out.printf("删除ES中订单成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
         }
-    }
-
-    /**
-     * 写入es
-     * @param orderDto
-     * @throws IOException
-     */
-    private void write(OrderDto orderDto) throws IOException {
-        IndexRequest<OrderDto> request = IndexRequest.of(i -> i
-                .index("orders-" + orderDto.getSellerId())
-                .id(orderDto.getId().toString())
-                .opType(OpType.Create)
-                .document(orderDto));
-
-        IndexResponse response = esClient.index(request);
-        System.out.printf("订单写入ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
     }
 }
