@@ -10,11 +10,13 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 import xiattong.demo.es.order.model.OrderDto;
+import xiattong.demo.redis.RedisClient;
 
 import javax.annotation.Resource;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * @author ：xiattong
@@ -28,6 +30,14 @@ public class ElasticMessageHandler {
 
     @Resource
     private ElasticsearchClient esClient;
+
+    @Resource
+    private RedisClient redisClient;
+
+    /**
+     * 超时时间 lock
+     */
+    public static final int LOCK_TIMEOUT = 300;
 
     /**
      * 对订单消息进行消费
@@ -80,18 +90,33 @@ public class ElasticMessageHandler {
      * 新增数据
      * @param orderList
      */
-    private void insertProcess(List<OrderDto> orderList) throws IOException {
+    private void insertProcess(List<OrderDto> orderList) {
         // 新增数据不需要做版本校验，直接写入es
         for (OrderDto orderDto : orderList) {
-            IndexRequest<OrderDto> request = IndexRequest.of(i -> i
-                    .index("orders")
-                    .requireAlias(Boolean.TRUE)
-                    .id(orderDto.getId().toString())
-                    .opType(OpType.Create)
-                    .document(orderDto));
+            Optional<String> lock = Optional.empty();
+            try {
+                // 给订单加锁
+                lock = redisClient.tryLock(orderDto.getOrderNo(), LOCK_TIMEOUT);
+                if (lock.isPresent()) {
+                    IndexRequest<OrderDto> request = IndexRequest.of(i -> i
+                            .index("orders")
+                            .requireAlias(Boolean.TRUE)
+                            .id(orderDto.getId().toString())
+                            .opType(OpType.Create)
+                            .document(orderDto));
 
-            IndexResponse response = esClient.index(request);
-            System.out.printf("订单写入ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
+                    IndexResponse response = esClient.index(request);
+                    System.out.printf("订单写入ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                // 抛出异常后，消息会重发
+                throw new RuntimeException(e);
+            } finally {
+                if (lock.isPresent()) {
+                    redisClient.unlock(orderDto.getOrderNo(), lock.get());
+                }
+            }
         }
     }
 
@@ -99,41 +124,56 @@ public class ElasticMessageHandler {
      * 更新数据
      * @param orderList
      */
-    private void updateProcess(List<OrderDto> orderList) throws IOException {
+    private void updateProcess(List<OrderDto> orderList) {
         for (OrderDto orderDto : orderList) {
-            // 更新需要先去ES中查询数据并比对版本号
-            SearchResponse<OrderDto> searchResponse = esClient.search(s -> s
-                            .index("orders")
-                            .query(q -> q.match(t -> t.field("orderNo").query(orderDto.getOrderNo()))),
-                    OrderDto.class
-            );
-            List<Hit<OrderDto>> hits = searchResponse.hits().hits();
-            if (CollectionUtils.isNotEmpty(hits)) {
-                for (Hit<OrderDto> hit: hits) {
-                    OrderDto oldOrder = hit.source();
-                    // 检查版本，新数据版本低时直接丢弃
-                    if (oldOrder.getVersion() >= orderDto.getVersion()) {
-                        continue;
+            Optional<String> lock = Optional.empty();
+            try {
+                // 给订单加锁
+                lock = redisClient.tryLock(orderDto.getOrderNo(), LOCK_TIMEOUT);
+                if (lock.isPresent()) {
+                    // 更新需要先去ES中查询数据并比对版本号
+                    SearchResponse<OrderDto> searchResponse = esClient.search(s -> s
+                                    .index("orders")
+                                    .query(q -> q.match(t -> t.field("orderNo").query(orderDto.getOrderNo()))),
+                            OrderDto.class
+                    );
+                    List<Hit<OrderDto>> hits = searchResponse.hits().hits();
+                    if (CollectionUtils.isNotEmpty(hits)) {
+                        for (Hit<OrderDto> hit : hits) {
+                            OrderDto oldOrder = hit.source();
+                            // 检查版本，新数据版本低时直接丢弃
+                            if (oldOrder.getVersion() >= orderDto.getVersion()) {
+                                continue;
+                            }
+                        }
                     }
+
+                    // 先删除
+                    DeleteByQueryRequest deleteRequest = DeleteByQueryRequest.of(i -> i
+                            .index("orders")
+                            .query(q -> q.match(t -> t.field("orderNo").query(orderDto.getOrderNo()))));
+                    esClient.deleteByQuery(deleteRequest);
+
+                    // 再写入
+                    IndexRequest<OrderDto> indexRequest = IndexRequest.of(i -> i
+                            .index("orders")
+                            .requireAlias(Boolean.TRUE)
+                            .id(orderDto.getId().toString())
+                            .opType(OpType.Create)
+                            .document(orderDto));
+
+                    IndexResponse indexResponse = esClient.index(indexRequest);
+                    System.out.printf("更新ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), indexResponse.version());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                // 抛出异常后，消息会重发
+                throw new RuntimeException(e);
+            } finally {
+                if (lock.isPresent()) {
+                    redisClient.unlock(orderDto.getOrderNo(), lock.get());
                 }
             }
-
-            // 先删除
-            DeleteByQueryRequest deleteRequest = DeleteByQueryRequest.of(i -> i
-                     .index("orders")
-                     .query(q -> q.match(t -> t.field("orderNo").query(orderDto.getOrderNo()))));
-            esClient.deleteByQuery(deleteRequest);
-
-            // 再写入
-            IndexRequest<OrderDto> indexRequest = IndexRequest.of(i -> i
-                    .index("orders")
-                    .requireAlias(Boolean.TRUE)
-                    .id(orderDto.getId().toString())
-                    .opType(OpType.Create)
-                    .document(orderDto));
-
-            IndexResponse indexResponse = esClient.index(indexRequest);
-            System.out.printf("更新ES成功！orderNo:{}, version:{}", orderDto.getOrderNo(), indexResponse.version());
         }
     }
 
@@ -143,10 +183,25 @@ public class ElasticMessageHandler {
      */
     private void deleteProcess(List<OrderDto> orderList) throws IOException{
         for (OrderDto orderDto : orderList) {
-            DeleteRequest request = DeleteRequest.of(i -> i.index("orders")
+            Optional<String> lock = Optional.empty();
+            try {
+                // 给订单加锁
+                lock = redisClient.tryLock(orderDto.getOrderNo(), LOCK_TIMEOUT);
+                if (lock.isPresent()) {
+                    DeleteRequest request = DeleteRequest.of(i -> i.index("orders")
                             .id(orderDto.getId().toString()));
-            DeleteResponse response = esClient.delete(request);
-            System.out.printf("删除ES中订单成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
+                    DeleteResponse response = esClient.delete(request);
+                    System.out.printf("删除ES中订单成功！orderNo:{}, version:{}", orderDto.getOrderNo(), response.version());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                // 抛出异常后，消息会重发
+                throw new RuntimeException(e);
+            } finally {
+                if (lock.isPresent()) {
+                    redisClient.unlock(orderDto.getOrderNo(), lock.get());
+                }
+            }
         }
     }
 }

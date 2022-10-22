@@ -2,7 +2,9 @@ package xiattong.demo.redis;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.util.StringUtils;
 import redis.clients.jedis.JedisPool;
@@ -15,6 +17,8 @@ import redis.clients.jedis.JedisPoolConfig;
  * @date ：Created in 2022/10/20 1:39
  * @modified By：
  */
+@Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(RedisProperty.class)
 public class RedisConfig {
 
     @Bean
