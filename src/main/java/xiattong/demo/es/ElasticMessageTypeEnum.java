@@ -24,8 +24,6 @@ public enum ElasticMessageTypeEnum {
     }
 
     /**
-     * 功能：根据活动类型来获取计算类型
-     *
      * @param type
      * @return
      */

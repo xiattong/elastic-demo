@@ -44,7 +44,7 @@ public class ElasticMessageHandler {
      * @param message
      * @throws RuntimeException
      */
-    public void ordersMessageHandle(String message) throws IOException{
+    public void ordersMessageHandle(String message) throws RuntimeException{
         if (StringUtils.isEmpty(message)) {
             return;
         }
@@ -67,7 +67,7 @@ public class ElasticMessageHandler {
      * @param type
      * @param msgObj
      */
-    private void doHandler(ElasticMessageTypeEnum type, JSONObject msgObj) throws IOException{
+    private void doHandler(ElasticMessageTypeEnum type, JSONObject msgObj) throws RuntimeException{
         // 解析出订单数据
         List<OrderDto> orderList = msgObj.getObject("data", new TypeReference<List<OrderDto>>(){});
         if (CollectionUtils.isEmpty(orderList)) {
@@ -181,7 +181,7 @@ public class ElasticMessageHandler {
      * 删除数据
      * @param orderList
      */
-    private void deleteProcess(List<OrderDto> orderList) throws IOException{
+    private void deleteProcess(List<OrderDto> orderList) {
         for (OrderDto orderDto : orderList) {
             Optional<String> lock = Optional.empty();
             try {
