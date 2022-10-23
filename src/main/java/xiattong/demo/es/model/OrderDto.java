@@ -1,4 +1,4 @@
-package xiattong.demo.es.order.model;
+package xiattong.demo.es.model;
 
 import lombok.Getter;
 import lombok.Setter;

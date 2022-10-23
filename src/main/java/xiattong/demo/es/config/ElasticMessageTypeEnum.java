@@ -1,4 +1,4 @@
-package xiattong.demo.es;
+package xiattong.demo.es.config;
 
 /**
  * ES消息类型枚举

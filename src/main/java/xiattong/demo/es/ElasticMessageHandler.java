@@ -9,11 +9,11 @@ import com.alibaba.fastjson.TypeReference;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
-import xiattong.demo.es.order.model.OrderDto;
+import xiattong.demo.es.config.ElasticMessageTypeEnum;
+import xiattong.demo.es.model.OrderDto;
 import xiattong.demo.redis.RedisClient;
 
 import javax.annotation.Resource;
-import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;

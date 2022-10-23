@@ -5,10 +5,9 @@ import co.elastic.clients.elasticsearch._types.OpType;
 import co.elastic.clients.elasticsearch.core.IndexRequest;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.indices.*;
-import org.elasticsearch.client.RequestOptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import xiattong.demo.es.order.model.OrderDto;
+import xiattong.demo.es.model.OrderDto;
 
 import javax.annotation.Resource;
 import java.io.IOException;
